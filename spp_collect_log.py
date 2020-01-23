@@ -8,6 +8,7 @@ from optparse import OptionParser
 import spplib.sdk.client as client
 import spplib.cli.util as spputil
 
+
 from spp_cleanup import cleanup_log
 import traceback
 
@@ -98,7 +99,7 @@ def get_alerts(session):
     return queryResult
 
 def format_alert_list(myQueryResult):
-    spputil.remove_links(myQueryResult)
+    #spputil.remove_links(myQueryResult)
     print()
     alert_fmt = "  {:<19.19s} | {:<6.6s} | {:<5s} | {:s}"
     print(alert_fmt.format("   last occurance", "Type", "ackn", "description"))
@@ -153,6 +154,35 @@ def s3_upload(filename):
     import subprocess
     subprocess.call('python s3.py --upload --filename {filename}'.format(**locals()), shell=True)
 
+def add_time(t):
+    global last_time
+    t_delta=t
+    #print(type(t))
+    t_delta= t-last_time
+    #t_delta = (last_time-t).astype('timedelta64[m]')
+    last_time = t
+    print(t_delta)
+    return t_delta
+
+def format_output(myQueryResult):
+    import pandas as pd
+    from pandas.io.json import json_normalize
+    import json
+    #the_mess1 = 'Log backup failed for database [WideWorldImporters] on instance [SQL2016]. An exception occurred while executing a Transact-SQL statement or batch.. Error: 0x80131501'
+    the_mess1 = 'Log backup failed for database [AdventureWorks2014] on instance [SQL2016]. An exception occurred while executing a Transact-SQL statement or batch.. Error: 0x80131501'
+    dataset = json_normalize(myQueryResult['alerts'])
+    dataset['_unitLevel'] = dataset['initMessageParams'].apply(lambda x: 'Foo' if x == None else x[0])
+    dataset['_lastSeen'] = dataset.apply(lambda row: add_time(row['alertTime']) if row['message'] == the_mess1 else 0, axis=1)
+    dataset_filter = dataset[['acknowledged', 'alertTime', 'category', 'categoryDisplayName', 'count', 'dataSource', 'expired', 'expiresAt', 'first', 'initMessageParams', 'initialMessage', 'jobSessionId', 'last', 'message', 'messageName', 'messageParams', 'name', 'retention', 'status', 'statusDisplayName', 'storageId', 'unique', '_unitLevel', '_lastSeen']]
+    #json_dataset = dataset_filter.to_json()
+
+    dataset_filter_last_line = dataset_filter[-3:]
+    #dataset_header = dataset.cloumns[['acknowledged', 'alertTime', 'category', 'categoryDisplayName', 'count', 'dataSource', 'expired', 'expiresAt', 'first', 'initMessageParams', 'initialMessage', 'jobSessionId', 'last', 'message', 'messageName', 'messageParams', 'name', 'retention', 'status', 'statusDisplayName', 'storageId', 'unique', '_unitLevel', '_lastSeen']]
+    json_dataset = dataset_filter_last_line.to_json(r'./data.csv', orient='split')
+    print('#' * 100)
+    print(json_dataset)
+    print('#' * 100)
+
 def main():
     if(options.uploadOnly and options.filename):
         s3_upload(options.filename)
@@ -164,6 +194,11 @@ def main():
         if(options.test):
             format_alert_list(myQueryResult)
 
+        if(options.lastLine):
+            if len(myQueryResult) > 0:
+                format_output(myQueryResult)
+            else:
+                Print('No Data')
 
         else:
             saved_file = save_to_file(spp_host, myQueryResult)
@@ -184,5 +219,6 @@ if __name__ == "__main__":
     parser.add_option("--upload", dest="upload", help="Upload the file direct to S3 Storage")
     parser.add_option("--upload-only", dest="uploadOnly", help="Use this to only upload all logs")
     parser.add_option("--filename", dest="filename", help="Upload a dedicated file")
+    parser.add_option("--last-line", dest="lastLine", help="Only collect the latest line from the log")
     (options, args) = parser.parse_args()
     main()
